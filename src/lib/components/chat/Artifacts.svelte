@@ -20,6 +20,7 @@
 	import SvgPanZoom from '../common/SVGPanZoom.svelte';
 	import ArrowLeft from '../icons/ArrowLeft.svelte';
 	import Download from '../icons/Download.svelte';
+	import ReactPreview from './ReactPreview.svelte';
 
 	export let overlay = false;
 
@@ -78,11 +79,15 @@
 	};
 
 	const downloadArtifact = () => {
-		const blob = new Blob([contents[selectedContentIdx].content], { type: 'text/html' });
+		const currentContent = contents[selectedContentIdx];
+		const fileType = currentContent.type === 'react' ? 'jsx' : 'html';
+		const mimeType = currentContent.type === 'react' ? 'text/jsx' : 'text/html';
+
+		const blob = new Blob([currentContent.content], { type: mimeType });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = `artifact-${$chatId}-${selectedContentIdx}.html`;
+		a.download = `artifact-${$chatId}-${selectedContentIdx}.${fileType}`;
 		document.body.appendChild(a);
 		a.click();
 		document.body.removeChild(a);
@@ -196,6 +201,20 @@
 							</button>
 						</Tooltip>
 
+						{#if contents[selectedContentIdx].type === 'react'}
+							<Tooltip content={$i18n.t('Open in new tab')}>
+								<button
+									class=" bg-none border-none text-xs bg-gray-50 hover:bg-gray-100 dark:bg-gray-850 dark:hover:bg-gray-800 transition rounded-md px-1.5 py-0.5"
+									on:click={() => {
+										const previewUrl = `/preview/${$chatId}/${selectedContentIdx}`;
+										window.open(previewUrl, '_blank');
+									}}
+								>
+									{$i18n.t('Open')}
+								</button>
+							</Tooltip>
+						{/if}
+
 						{#if contents[selectedContentIdx].type === 'iframe'}
 							<Tooltip content={$i18n.t('Open in full screen')}>
 								<button
@@ -248,11 +267,20 @@
 								className=" w-full h-full max-h-full overflow-hidden"
 								svg={contents[selectedContentIdx].content}
 							/>
+						{:else if contents[selectedContentIdx].type === 'react'}
+							<ReactPreview
+								code={contents[selectedContentIdx].content}
+								theme={$settings?.theme === 'dark' ? 'dark' : 'light'}
+								editable={false}
+								showTabs={false}
+								showLineNumbers={false}
+								showNavigator={false}
+							/>
 						{/if}
 					</div>
 				{:else}
 					<div class="m-auto font-medium text-xs text-gray-900 dark:text-white">
-						{$i18n.t('No HTML, CSS, or JavaScript content found.')}
+						{$i18n.t('No HTML, CSS, JavaScript, or React content found.')}
 					</div>
 				{/if}
 			</div>

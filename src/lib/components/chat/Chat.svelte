@@ -883,10 +883,18 @@
                     `;
 					contents = [...contents, { type: 'iframe', content: renderedContent }];
 				} else {
-					// Check for SVG content
+					// Check for SVG content and React code
 					for (const block of codeBlocks) {
 						if (block.lang === 'svg' || (block.lang === 'xml' && block.code.includes('<svg'))) {
 							contents = [...contents, { type: 'svg', content: block.code }];
+						} else if (
+							['jsx', 'tsx', 'react'].includes(block.lang?.toLowerCase()) ||
+							(['javascript', 'typescript', 'js', 'ts'].includes(block.lang?.toLowerCase()) &&
+								/import.*from\s+['"]react['"]|import\s+React|useState|useEffect|<[A-Z]\w*[\s>\/]/.test(
+									block.code
+								))
+						) {
+							contents = [...contents, { type: 'react', content: block.code }];
 						}
 					}
 				}

@@ -179,9 +179,18 @@
 		onUpdate={async (token) => {
 			const { lang, text: code } = token;
 
+			const isReactCode =
+				['jsx', 'tsx', 'react'].includes(lang?.toLowerCase()) ||
+				(['javascript', 'typescript', 'js', 'ts'].includes(lang?.toLowerCase()) &&
+					/import.*from\s+['"]react['"]|import\s+React|useState|useEffect|<[A-Z]\w*[\s>\/]/.test(
+						code
+					));
+
 			if (
 				($settings?.detectArtifacts ?? true) &&
-				(['html', 'svg'].includes(lang) || (lang === 'xml' && code.includes('svg'))) &&
+				(['html', 'svg'].includes(lang) ||
+					(lang === 'xml' && code.includes('svg')) ||
+					isReactCode) &&
 				!$mobile &&
 				$chatId
 			) {

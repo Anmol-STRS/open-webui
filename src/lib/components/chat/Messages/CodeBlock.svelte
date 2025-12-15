@@ -136,6 +136,23 @@
 		return false;
 	};
 
+	const checkReactCode = (str) => {
+		// Check if the string contains typical React/JSX syntax
+		const reactPatterns = [
+			/import\s+.*from\s+['"]react['"]/,
+			/import\s+React/,
+			/from\s+['"]react['"]/,
+			/<[A-Z]\w*[\s>\/]/,  // JSX component tags
+			/React\.Component/,
+			/useState|useEffect|useContext|useReducer|useCallback|useMemo|useRef/,
+			/export\s+default\s+function\s+[A-Z]/,  // Exported component
+			/className=/,  // JSX className
+			/\breturn\s*\(/  // Common in React components
+		];
+
+		return reactPatterns.some(pattern => pattern.test(str));
+	};
+
 	const executePython = async (code) => {
 		result = null;
 		stdout = null;
@@ -501,6 +518,17 @@
 					>
 
 					{#if preview && ['html', 'svg'].includes(lang)}
+						<button
+							class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
+							on:click={previewCode}
+						>
+							<div>
+								{$i18n.t('Preview')}
+							</div>
+						</button>
+					{/if}
+
+					{#if preview && (['jsx', 'tsx', 'react'].includes(lang.toLowerCase()) || (lang.toLowerCase() === 'javascript' && checkReactCode(code)) || (lang.toLowerCase() === 'typescript' && checkReactCode(code)) || checkReactCode(code))}
 						<button
 							class="flex gap-1 items-center run-code-button bg-none border-none transition rounded-md px-1.5 py-0.5 bg-white dark:bg-black"
 							on:click={previewCode}
