@@ -1814,5 +1814,13 @@
 	"Your entire contribution will go directly to the plugin developer; Open WebUI does not take any percentage. However, the chosen funding platform might have its own fees.": "",
 	"YouTube": "",
 	"Youtube Language": "",
-	"Youtube Proxy URL": ""
+	"Youtube Proxy URL": "",
+	"Awaiting responses": "Awaiting responses",
+	"Estimated cost": "Estimated cost",
+	"No pricing data detected": "No pricing data detected",
+	"Tokens used": "Tokens used",
+	"Usage metrics will appear after your next AI response.": "Usage metrics will appear after your next AI response.",
+	"Updated {{when}}": "Updated {{when}}",
+	"{{count}} responses tracked": "{{count}} responses tracked",
+	"tokens": "tokens"
 }

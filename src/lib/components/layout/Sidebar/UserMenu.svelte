@@ -6,7 +6,7 @@
 	import { goto } from '$app/navigation';
 	import { fade, slide } from 'svelte/transition';
 
-	import { getUsage } from '$lib/apis';
+	import { getUsage, getUsageSummary } from '$lib/apis';
 	import { getSessionUser, userSignOut } from '$lib/apis/auths';
 
 	import { showSettings, mobile, showSidebar, showShortcuts, user } from '$lib/stores';
@@ -25,6 +25,7 @@
 	import SignOut from '$lib/components/icons/SignOut.svelte';
 	import FaceSmile from '$lib/components/icons/FaceSmile.svelte';
 	import UserStatusModal from './UserStatusModal.svelte';
+	import UsagePreview from './UsagePreview.svelte';
 	import Emoji from '$lib/components/common/Emoji.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 	import { updateUserStatus } from '$lib/apis/users';
@@ -59,8 +60,23 @@
 		}
 	};
 
+	let usageSummary = null;
+	const getUsageSummaryInfo = async () => {
+		const res = await getUsageSummary(localStorage.token).catch((error) => {
+			console.error('Error fetching usage summary:', error);
+			return null;
+		});
+
+		if (res) {
+			usageSummary = res;
+		} else {
+			usageSummary = null;
+		}
+	};
+
 	$: if (show) {
 		getUsageInfo();
+		getUsageSummaryInfo();
 	}
 </script>
 
@@ -352,6 +368,12 @@
 				<div class=" self-center truncate">{$i18n.t('Sign Out')}</div>
 			</DropdownMenu.Item>
 
+			{#if usageSummary}
+				<div class="mx-1 my-2">
+					<UsagePreview summary={usageSummary} />
+				</div>
+			{/if}
+
 			{#if showActiveUsers && usage}
 				{#if usage?.user_count}
 					<hr class=" border-gray-50/30 dark:border-gray-800/30 my-1 p-0" />
@@ -365,6 +387,7 @@
 							class="flex rounded-xl py-1 px-3 text-xs gap-2.5 items-center"
 							on:mouseenter={() => {
 								getUsageInfo();
+								getUsageSummaryInfo();
 							}}
 						>
 							<div class=" flex items-center">

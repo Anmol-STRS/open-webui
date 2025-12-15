@@ -17,7 +17,7 @@ from urllib.parse import urlencode, parse_qs, urlparse
 from pydantic import BaseModel
 from sqlalchemy import text
 
-from typing import Optional
+from typing import Optional, Any
 from aiocache import cached
 import aiohttp
 import anyio.to_thread
@@ -2012,6 +2012,145 @@ async def get_app_changelog():
     return {key: CHANGELOG[key] for idx, key in enumerate(CHANGELOG) if idx < 5}
 
 
+def _as_int(value: Any) -> int:
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return int(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if value == "":
+                return 0
+            return int(float(value))
+    except (ValueError, TypeError):
+        return 0
+    return int(value or 0)
+
+
+def _as_float(value: Any) -> float:
+    try:
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+        if isinstance(value, str):
+            value = value.strip()
+            if value == "":
+                return 0.0
+            return float(value)
+    except (ValueError, TypeError):
+        return 0.0
+    return float(value or 0.0)
+
+
+def _extract_usage_payload(message: dict) -> Optional[dict]:
+    if not isinstance(message, dict):
+        return None
+
+    usage = message.get("usage")
+    if isinstance(usage, dict):
+        return usage
+
+    info = message.get("info")
+    if isinstance(info, dict):
+        nested_usage = info.get("usage")
+        if isinstance(nested_usage, dict):
+            return nested_usage
+
+        usage_keys = {
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "prompt_eval_count",
+            "eval_count",
+            "input_tokens",
+            "output_tokens",
+            "estimated_cost",
+        }
+        if any(key in info for key in usage_keys):
+            return info
+
+    return None
+
+
+def _normalize_usage_payload(payload: dict) -> dict:
+    def pick_int(*keys):
+        for key in keys:
+            if key in payload:
+                value = _as_int(payload.get(key))
+                if value:
+                    return value
+        return 0
+
+    def pick_float(*keys):
+        for key in keys:
+            if key in payload:
+                value = _as_float(payload.get(key))
+                if value:
+                    return value
+        return 0.0
+
+    prompt_tokens = pick_int(
+        "prompt_tokens",
+        "prompt_eval_count",
+        "input_tokens",
+        "usage_prompt_tokens",
+        "prompt_count",
+    )
+    completion_tokens = pick_int(
+        "completion_tokens",
+        "eval_count",
+        "output_tokens",
+        "usage_completion_tokens",
+    )
+    cached_tokens = pick_int(
+        "prompt_cache_hit_tokens",
+        "cache_hit_tokens",
+        "cache_read_input_tokens",
+        "cached_tokens",
+    )
+    total_tokens = pick_int("total_tokens", "usage_total_tokens", "token_count")
+    if total_tokens == 0:
+        total_tokens = prompt_tokens + completion_tokens + cached_tokens
+    other_tokens = max(total_tokens - (prompt_tokens + completion_tokens + cached_tokens), 0)
+
+    prompt_cost = pick_float("prompt_cost", "input_cost", "cache_creation_input_cost")
+    completion_cost = pick_float("completion_cost", "output_cost")
+    cached_cost = pick_float("cache_read_cost", "prompt_cache_hit_cost", "cached_cost")
+    total_cost = pick_float(
+        "total_cost",
+        "cost",
+        "estimated_cost",
+        "total_cost_usd",
+        "billed_amount",
+    )
+    if total_cost == 0.0:
+        total_cost = prompt_cost + completion_cost + cached_cost
+    other_cost = max(total_cost - (prompt_cost + completion_cost + cached_cost), 0.0)
+
+    currency = None
+    for key in ("currency", "cost_currency", "total_cost_currency"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            currency = value.strip().upper()
+            break
+
+    return {
+        "tokens": {
+            "prompt": prompt_tokens,
+            "completion": completion_tokens,
+            "cached": cached_tokens,
+            "other": other_tokens,
+        },
+        "total_tokens": total_tokens,
+        "cost": {
+            "prompt": prompt_cost,
+            "completion": completion_cost,
+            "cached": cached_cost,
+            "other": other_cost,
+        },
+        "total_cost": total_cost,
+        "currency": currency,
+    }
+
+
 @app.get("/api/usage")
 async def get_current_usage(user=Depends(get_verified_user)):
     """
@@ -2025,6 +2164,81 @@ async def get_current_usage(user=Depends(get_verified_user)):
         }
     except Exception as e:
         log.error(f"Error getting usage statistics: {e}")
+        raise HTTPException(status_code=500, detail="Internal Server Error")
+
+
+@app.get("/api/usage/details")
+async def get_usage_details(user=Depends(get_verified_user)):
+    """
+    Aggregate token and cost information for the authenticated user.
+    """
+    try:
+        chats = Chats.get_chats_by_user_id(user.id)
+        summary = {
+            "tokens": {"prompt": 0, "completion": 0, "cached": 0, "other": 0, "total": 0},
+            "cost": {
+                "prompt": 0.0,
+                "completion": 0.0,
+                "cached": 0.0,
+                "other": 0.0,
+                "total": 0.0,
+                "currency": None,
+            },
+            "messages": 0,
+            "chats": len(chats),
+            "last_activity": None,
+        }
+
+        for chat in chats:
+            messages = chat.chat.get("history", {}).get("messages", {})
+            for message in messages.values():
+                usage_payload = _extract_usage_payload(message)
+                if not usage_payload:
+                    continue
+
+                stats = _normalize_usage_payload(usage_payload)
+                if stats["total_tokens"] == 0 and stats["total_cost"] == 0:
+                    continue
+
+                summary["messages"] += 1
+                for key in ("prompt", "completion", "cached", "other"):
+                    summary["tokens"][key] += stats["tokens"][key]
+                    summary["cost"][key] += stats["cost"][key]
+
+                if stats["currency"] and summary["cost"]["currency"] is None:
+                    summary["cost"]["currency"] = stats["currency"]
+
+                timestamp = (
+                    message.get("timestamp")
+                    or message.get("created_at")
+                    or chat.updated_at
+                    or chat.created_at
+                )
+                if isinstance(timestamp, (int, float)):
+                    ts = int(timestamp)
+                    summary["last_activity"] = (
+                        ts
+                        if summary["last_activity"] is None
+                        else max(summary["last_activity"], ts)
+                    )
+
+        summary["tokens"]["total"] = (
+            summary["tokens"]["prompt"]
+            + summary["tokens"]["completion"]
+            + summary["tokens"]["cached"]
+            + summary["tokens"]["other"]
+        )
+        summary["cost"]["total"] = (
+            summary["cost"]["prompt"]
+            + summary["cost"]["completion"]
+            + summary["cost"]["cached"]
+            + summary["cost"]["other"]
+        )
+        summary["cost"]["currency"] = summary["cost"]["currency"] or "USD"
+
+        return summary
+    except Exception as e:
+        log.error(f"Error aggregating usage summary: {e}")
         raise HTTPException(status_code=500, detail="Internal Server Error")
 
 
