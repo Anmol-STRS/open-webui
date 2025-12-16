@@ -93,7 +93,7 @@ root.render(<App />);`
 						showNavigator,
 						showTabs,
 						showLineNumbers,
-						editorHeight: '500px',
+						editorHeight: '100%',
 						editorWidthPercentage: editable ? 50 : 0,
 						classes: {
 							'sp-wrapper': 'sandpack-custom-wrapper',
@@ -136,28 +136,49 @@ root.render(<App />);`
 	});
 </script>
 
-<div bind:this={container} class="w-full h-full min-h-[400px] sandpack-wrapper"></div>
+<div bind:this={container} class="w-full h-full sandpack-wrapper"></div>
 
 <style>
 	.sandpack-wrapper {
 		border-radius: 0.75rem;
 		overflow: hidden;
+		min-height: 400px;
+		height: 100%;
+		display: flex;
+		flex-direction: column;
 	}
 
 	:global(.sandpack-custom-wrapper) {
 		border-radius: 0.75rem;
+		height: 100% !important;
+		display: flex !important;
+		flex-direction: column !important;
 	}
 
 	:global(.sandpack-custom-layout) {
 		border: none !important;
 		border-radius: 0.75rem;
+		height: 100% !important;
+		flex: 1 !important;
+		display: flex !important;
+		flex-direction: row !important;
 	}
 
 	:global(.sp-preview-container) {
 		background: white;
+		height: 100% !important;
+		flex: 1 !important;
 	}
 
 	:global([data-theme='dark'] .sp-preview-container) {
 		background: #1a1a1a;
+	}
+
+	:global(.sp-preview-iframe) {
+		height: 100% !important;
+	}
+
+	:global(.sp-stack) {
+		height: 100% !important;
 	}
 </style>

@@ -1,0 +1,153 @@
+# Model Registry Configuration
+# This file defines providers, models, and routing rules for multi-provider support
+
+# Provider configurations
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    api_key_env: "OPENAI_API_KEY"
+    timeout: 60
+
+  deepseek:
+    base_url: "https://api.deepseek.com/v1"
+    api_key_env: "DEEPSEEK_API_KEY"
+    timeout: 60
+
+  # Optional: Local DeepSeek-Coder instance (Ollama/vLLM/LocalAI/etc)
+  # Uncomment if you have a local deployment
+  # deepseek_coder_local:
+  #   base_url: "http://localhost:11434/v1"  # Example: Ollama OpenAI-compatible endpoint
+  #   api_key_env: "DEEPSEEK_CODER_LOCAL_KEY"
+  #   timeout: 120
+
+# Model specifications
+models:
+  # OpenAI GPT-4 models
+  - id: "gpt-4"
+    provider: "openai"
+    supports_tools: true
+    supports_vision: true
+    supports_json_schema: true
+    max_context_tokens: 128000
+    max_output_tokens: 4096
+    reliability_tier: 3  # Most reliable
+    cost_tier: 3         # Most expensive
+    speed_tier: 2        # Medium speed
+    tags: ["general", "rag", "reliable", "tools"]
+
+  - id: "gpt-4-turbo"
+    provider: "openai"
+    supports_tools: true
+    supports_vision: true
+    supports_json_schema: true
+    max_context_tokens: 128000
+    max_output_tokens: 4096
+    reliability_tier: 3
+    cost_tier: 3
+    speed_tier: 3        # Fastest OpenAI
+    tags: ["general", "rag", "reliable", "tools", "fast"]
+
+  - id: "gpt-3.5-turbo"
+    provider: "openai"
+    supports_tools: true
+    supports_vision: false
+    supports_json_schema: true
+    max_context_tokens: 16385
+    max_output_tokens: 4096
+    reliability_tier: 3
+    cost_tier: 1         # Cheapest OpenAI
+    speed_tier: 3
+    tags: ["fast", "cheap", "general"]
+
+  # DeepSeek models
+  - id: "deepseek-chat"
+    provider: "deepseek"
+    supports_tools: true
+    supports_vision: false
+    supports_json_schema: true
+    max_context_tokens: 64000
+    max_output_tokens: 4000
+    reliability_tier: 2
+    cost_tier: 1         # Very cheap
+    speed_tier: 3        # Fast
+    tags: ["fast", "cheap", "general", "tools"]
+
+  - id: "deepseek-reasoner"
+    provider: "deepseek"
+    supports_tools: false
+    supports_vision: false
+    supports_json_schema: false
+    max_context_tokens: 64000
+    max_output_tokens: 8000
+    reliability_tier: 2
+    cost_tier: 2
+    speed_tier: 1        # Slower (reasoning takes time)
+    tags: ["reasoning", "complex"]
+
+  # Optional: Local DeepSeek-Coder
+  # Uncomment if you have a local deployment
+  # - id: "deepseek-coder-v2"
+  #   provider: "deepseek_coder_local"
+  #   supports_tools: false
+  #   supports_vision: false
+  #   supports_json_schema: false
+  #   max_context_tokens: 16000
+  #   max_output_tokens: 8192
+  #   reliability_tier: 2
+  #   cost_tier: 1
+  #   speed_tier: 2
+  #   tags: ["coding"]
+
+# Routing rules (evaluated in order, first match wins)
+routes:
+  # Route 1: Coding-heavy prompts
+  - name: "coding"
+    when:
+      any:
+        - has_code_block: true
+        - contains_regex: "\\b(docker|npm|pip|git|python|javascript|typescript|react|vue|sql|database|api|endpoint|function|class|import|export|async|await|try|catch|exception|error|stack trace|debug|test|unittest|pytest)\\b"
+    # Use GPT-3.5-turbo for coding (fast and cheap)
+    use_model: "gpt-3.5-turbo"
+    fallback_models: ["gpt-4", "gpt-4-turbo"]
+    timeout_ms: 45000
+
+  # Route 2: Structured output / tool calling
+  - name: "structured_or_tools"
+    when:
+      any:
+        - tools_enabled: true
+        - response_format_required: "json_schema"
+    # Prefer reliable models with strong tool support
+    use_model: "gpt-4"
+    fallback_models: ["gpt-4-turbo", "gpt-3.5-turbo"]
+    timeout_ms: 60000
+
+  # Route 3: RAG or long context
+  - name: "rag_or_long"
+    when:
+      any:
+        - rag_enabled: true
+        - context_est_tokens_gt: 12000
+        - has_attachments: true
+    # Prefer models with large context windows
+    use_model: "gpt-4-turbo"
+    fallback_models: ["gpt-4", "gpt-3.5-turbo"]
+    timeout_ms: 60000
+
+  # Route 4: Complex reasoning
+  - name: "reasoning"
+    when:
+      any:
+        - contains_regex: "\\b(analyze|reasoning|logic|proof|theorem|mathematical|calculate|compute|solve|problem)\\b"
+    use_model: "gpt-4"
+    fallback_models: ["gpt-4-turbo", "gpt-3.5-turbo"]
+    timeout_ms: 90000
+
+  # Route 5: Default (casual chat)
+  - name: "default"
+    when:
+      always: true
+    # Use GPT-3.5-turbo for general chat (fast and cost-effective)
+    use_model: "gpt-3.5-turbo"
+    fallback_models: ["gpt-4", "gpt-4-turbo"]
+    timeout_ms: 30000

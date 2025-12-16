@@ -93,6 +93,8 @@ from open_webui.routers import (
     users,
     utils,
     scim,
+    pricing,
+    observability,
 )
 
 from open_webui.routers.retrieval import (
@@ -598,6 +600,30 @@ async def lifespan(app: FastAPI):
         limiter.total_tokens = THREAD_POOL_SIZE
 
     asyncio.create_task(periodic_usage_pool_cleanup())
+
+    # Initialize pricing database if empty
+    try:
+        from open_webui.models.pricing import Pricings
+        from open_webui.utils.pricing_data import initialize_pricing_database
+
+        existing_pricing = Pricings.get_all_pricing(active_only=False)
+        if len(existing_pricing) == 0:
+            log.info("Initializing pricing database with default pricing data...")
+            result = initialize_pricing_database()
+            log.info(
+                f"Pricing initialized: {result['initialized']} new, {result['updated']} updated"
+            )
+    except Exception as e:
+        log.warning(f"Could not initialize pricing database: {e}")
+
+    # Initialize observability tables
+    try:
+        from open_webui.services.init_observability import init_observability_tables
+        log.info("Initializing observability tables...")
+        init_observability_tables()
+        log.info("Observability tables initialized")
+    except Exception as e:
+        log.warning(f"Could not initialize observability tables: {e}")
 
     if app.state.config.ENABLE_BASE_MODELS_CACHE:
         await get_all_models(
@@ -1388,6 +1414,7 @@ app.include_router(models.router, prefix="/api/v1/models", tags=["models"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"])
 app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
+app.include_router(pricing.router, prefix="/api/v1/pricing", tags=["pricing"])
 
 app.include_router(memories.router, prefix="/api/v1/memories", tags=["memories"])
 app.include_router(folders.router, prefix="/api/v1/folders", tags=["folders"])
@@ -1398,6 +1425,7 @@ app.include_router(
     evaluations.router, prefix="/api/v1/evaluations", tags=["evaluations"]
 )
 app.include_router(utils.router, prefix="/api/v1/utils", tags=["utils"])
+app.include_router(observability.router, prefix="/api/v1/observability", tags=["observability"])
 
 # SCIM 2.0 API for identity management
 if ENABLE_SCIM:
@@ -2151,6 +2179,42 @@ def _normalize_usage_payload(payload: dict) -> dict:
     }
 
 
+def _iter_messages_from_container(container):
+    if isinstance(container, dict):
+        for message in container.values():
+            if isinstance(message, dict):
+                yield message
+    elif isinstance(container, list):
+        for message in container:
+            if isinstance(message, dict):
+                yield message
+
+
+def _iter_chat_messages(chat_payload: dict):
+    if not isinstance(chat_payload, dict):
+        return
+
+    seen_ids = set()
+    containers = []
+
+    history = chat_payload.get("history")
+    if isinstance(history, dict):
+        containers.append(history.get("messages"))
+
+    containers.append(chat_payload.get("messages"))
+
+    for container in containers:
+        if not container:
+            continue
+        for message in _iter_messages_from_container(container):
+            message_id = message.get("id")
+            if message_id:
+                if message_id in seen_ids:
+                    continue
+                seen_ids.add(message_id)
+            yield message
+
+
 @app.get("/api/usage")
 async def get_current_usage(user=Depends(get_verified_user)):
     """
@@ -2190,8 +2254,8 @@ async def get_usage_details(user=Depends(get_verified_user)):
         }
 
         for chat in chats:
-            messages = chat.chat.get("history", {}).get("messages", {})
-            for message in messages.values():
+            chat_payload = chat.chat if isinstance(chat.chat, dict) else {}
+            for message in _iter_chat_messages(chat_payload):
                 usage_payload = _extract_usage_payload(message)
                 if not usage_payload:
                     continue
@@ -2199,6 +2263,31 @@ async def get_usage_details(user=Depends(get_verified_user)):
                 stats = _normalize_usage_payload(usage_payload)
                 if stats["total_tokens"] == 0 and stats["total_cost"] == 0:
                     continue
+
+                # If no cost data from API, calculate using pricing database
+                if stats["total_cost"] == 0.0 and stats["total_tokens"] > 0:
+                    model_id = message.get("model", "")
+                    if model_id:
+                        try:
+                            from open_webui.models.pricing import Pricings
+
+                            calculated_cost = Pricings.calculate_cost(
+                                provider="",  # Will be inferred from model_id
+                                model_name=model_id,
+                                input_tokens=stats["tokens"]["prompt"],
+                                output_tokens=stats["tokens"]["completion"],
+                                cache_read_tokens=stats["tokens"]["cached"],
+                                cache_write_tokens=0,
+                            )
+
+                            if calculated_cost["pricing_available"]:
+                                stats["cost"]["prompt"] = calculated_cost["input_cost"]
+                                stats["cost"]["completion"] = calculated_cost["output_cost"]
+                                stats["cost"]["cached"] = calculated_cost["cache_read_cost"]
+                                stats["total_cost"] = calculated_cost["total_cost"]
+                                stats["currency"] = calculated_cost["currency"]
+                        except Exception as e:
+                            log.debug(f"Error calculating cost for model {model_id}: {e}")
 
                 summary["messages"] += 1
                 for key in ("prompt", "completion", "cached", "other"):

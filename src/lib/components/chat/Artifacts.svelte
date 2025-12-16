@@ -245,10 +245,10 @@
 			<div class=" absolute top-0 left-0 right-0 bottom-0 z-10"></div>
 		{/if}
 
-		<div class="flex-1 w-full h-full">
-			<div class=" h-full flex flex-col">
+		<div class="flex-1 w-full overflow-hidden flex flex-col">
+			<div class="flex-1 overflow-hidden">
 				{#if contents.length > 0}
-					<div class="max-w-full w-full h-full">
+					<div class="w-full h-full">
 						{#if contents[selectedContentIdx].type === 'iframe'}
 							<iframe
 								bind:this={iframeElement}

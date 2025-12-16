@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python test_smart_completion.py:*)",
+      "Bash(curl:*)",
+      "Bash(python -m json.tool:*)"
+    ]
+  }
+}

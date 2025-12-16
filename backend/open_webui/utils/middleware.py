@@ -2531,6 +2531,16 @@ async def process_chat_response(
                                                 },
                                             }
                                         )
+                                        try:
+                                            Chats.upsert_message_to_chat_by_id_and_message_id(
+                                                metadata["chat_id"],
+                                                metadata["message_id"],
+                                                {"usage": usage},
+                                            )
+                                        except Exception as e:
+                                            log.debug(
+                                                f"Failed to persist usage for message {metadata['message_id']}: {e}"
+                                            )
 
                                     if not choices:
                                         error = data.get("error", {})

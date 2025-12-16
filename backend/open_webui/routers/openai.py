@@ -890,6 +890,11 @@ async def generate_chat_completion(
     if "max_tokens" in payload and "max_completion_tokens" in payload:
         del payload["max_tokens"]
 
+    # Enable usage tracking for streaming responses
+    # This ensures usage data is included in the response so it can be tracked
+    if payload.get("stream", False) and "stream_options" not in payload:
+        payload["stream_options"] = {"include_usage": True}
+
     # Convert the modified body back to JSON
     if "logit_bias" in payload:
         payload["logit_bias"] = json.loads(
@@ -970,6 +975,112 @@ async def generate_chat_completion(
     finally:
         if not streaming:
             await cleanup_response(r, session)
+
+
+@router.post("/chat/completions/smart")
+async def generate_smart_chat_completion(
+    request: Request,
+    form_data: dict,
+    user=Depends(get_verified_user),
+):
+    """
+    Smart chat completion endpoint with intelligent model routing.
+
+    This endpoint analyzes the request and automatically selects the best model:
+    - Code-heavy prompts: Uses gpt-3.5-turbo (fast, cost-effective)
+    - Complex reasoning: Uses gpt-4 (high quality)
+    - General chat: Uses gpt-3.5-turbo (default)
+
+    All requests are logged to the observability dashboard for metrics.
+    """
+    from open_webui.services.model_router import ModelRouter, RoutingContext
+    from open_webui.models.observability import RequestLog
+    from open_webui.internal.db import Session
+    import uuid
+    import time
+
+    try:
+        # Get the model router
+        router_instance = ModelRouter()
+
+        # Extract parameters
+        messages = form_data.get("messages", [])
+        user_model_override = form_data.get("model")  # User can override routing
+
+        # Create routing context
+        context = RoutingContext(
+            messages=messages,
+            tools_enabled=bool(form_data.get("tools")),
+            has_attachments=False,  # Could check metadata
+            rag_enabled=False,  # Could check metadata
+        )
+
+        # Route to best model (unless user overrides)
+        start_time = time.time()
+        if user_model_override:
+            selected_model = user_model_override
+            route_name = "user_override"
+        else:
+            routing_decision = router_instance.route(context)
+            selected_model = routing_decision.model_id
+            route_name = routing_decision.route_name
+
+        # Update form_data with selected model
+        form_data["model"] = selected_model
+
+        log.info(f"Smart routing: {route_name} -> {selected_model}")
+
+        # Delegate to the standard OpenAI completion endpoint
+        response = await generate_chat_completion(request, form_data, user, bypass_filter=False)
+
+        # Log to observability (async, don't block response)
+        try:
+            latency_ms = (time.time() - start_time) * 1000
+            log_entry = RequestLog(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                provider="openai",
+                model_id=selected_model,
+                route_name=route_name,
+                fallback_used=False,
+                total_latency_ms=latency_ms,
+                rag_used=False,
+            )
+            with Session() as session:
+                session.add(log_entry)
+                session.commit()
+        except Exception as log_error:
+            log.warning(f"Failed to log observability: {log_error}")
+
+        return response
+
+    except Exception as e:
+        log.exception(f"Smart completion error: {e}")
+
+        # Log error to observability
+        try:
+            log_entry = RequestLog(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                provider="openai",
+                model_id=form_data.get("model", "unknown"),
+                route_name="error",
+                fallback_used=False,
+                total_latency_ms=0,
+                error_type=type(e).__name__,
+                error_short=str(e)[:200],
+                rag_used=False,
+            )
+            with Session() as session:
+                session.add(log_entry)
+                session.commit()
+        except:
+            pass
+
+        raise HTTPException(
+            status_code=500,
+            detail=f"Smart completion failed: {str(e)}",
+        )
 
 
 async def embeddings(request: Request, form_data: dict, user):
